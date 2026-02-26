@@ -593,20 +593,31 @@
                 
                 this.add.text(width / 2, height / 2 + 100, `BEST: ${data.highScore}`, { fontSize: '60px', fill: '#ffcc00' }).setOrigin(0.5);
 
-                const restartBtn = this.add.container(width / 2, height / 2 + 350);
-                const bg = this.add.rectangle(0, 0, 600, 150, 0x00ffcc).setInteractive();
-                const txt = this.add.text(0, 0, 'PLAY AGAIN', { fontSize: '60px', fill: '#000' }).setOrigin(0.5);
-                restartBtn.add([bg, txt]);
+                const btnX = width / 2;
+            
+                const btnY = height / 2 + 350;
+                const btnBg = this.add.rectangle(btnX, btnY, 600, 150, 0x00ffcc)
+                    .setInteractive({ useHandCursor: true });
 
-                bg.on('pointerdown', () => {
-                    this.tweens.add({
-                        targets: restartBtn,
-                        scale: 0.9,
-                        duration: 50,
-                        yoyo: true,
-                        onComplete: () => this.scene.start('MainScene')
-                    });
-                });
+                const btnTxt = this.add.text(btnX, btnY, 'PLAY AGAIN', {
+                    fontSize: '60px',
+                    fill: '#000'
+                    }).setOrigin(0.5);
+
+                // press animation
+                btnBg.on('pointerdown', () => {
+                  this.tweens.add({
+                    targets: [btnBg, btnTxt],
+                    scale: 0.95,
+                    duration: 80,
+                    yoyo: true
+  });
+});
+
+// restart on release (best for touch)
+btnBg.on('pointerup', () => {
+  this.scene.start('MainScene');
+});
 
                 this.time.addEvent({
                     delay: 200,
