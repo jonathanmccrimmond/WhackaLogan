@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whack a Logan: Arcade Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Roboto+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Bungee', cursive;
+        }
+        #game-container {
+            width: 100%;
+            height: 100%;
+            max-width: 100vw;
+            max-height: 100vh;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <script>
+        const CONFIG = {
+            width: 1080,
+            height: 1920,
+            gridSize: 3,
+            holeRadius: 140,
+            spawnIntervalMin: 500,
+            spawnIntervalMax: 1000,
+            displayDuration: 750,
+            gameDuration: 60
+        };
+
+        const DEPTH = {
+            BACKGROUND: -10,
+            VIGNETTE: -9,
+            GRID_SHADOW: -8,
+            HOLES: -7,
+            SPOTLIGHT: -6,
+            NEPHEW: 0,
+            UI: 10
+        };
+
+        class MainScene extends Phaser.Scene {
+            constructor() {
+                super('MainScene');
+            }
+
+            preload() {
+                this.load.image('calm', 'calm.png');
+                this.load.image('shocked', 'shocked.png');
+                this.load.image('annoyed', 'annoyed.png');
+                this.load.image('sleeping', 'sleeping.png');
+                this.load.image('golden', 'golden.png');
+
+                // Generate a light dot-pattern texture
+                const dotSize = 4;
+                const spacing = 64;
+                const canvas = this.textures.createCanvas('pattern', spacing, spacing);
+                const ctx = canvas.getContext();
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.beginPath();
+                ctx.arc(spacing / 2, spacing / 2, dotSize / 2, 0, Math.PI * 2);
+                ctx.fill();
+                canvas.refresh();
+            }
+
+            init() {
+                this.score = 0;
+                this.timeLeft = CONFIG.gameDuration;
+                this.combo = 0;
+                this.multiplier = 1;
+                this.holes = [];
+                this.activeNephew = null;
+                this.activeSpotlight = null;
+                this.isGameOver = false;
+            }
+
+            create() {
+                const { width, height } = this.cameras.main;
+
+                // Background Gradient
+                const bg = this.add.graphics();
+                bg.fillGradientStyle(0x0f0c29, 0x0f0c29, 0x302b63, 0x24243e, 1);
+                bg.fillRect(0, 0, width, height);
+                bg.setDepth(DEPTH.BACKGROUND);
+
+                // Light Textured Pattern
+                const pattern = this.add.tileSprite(0, 0, width, height, 'pattern');
+                pattern.setOrigin(0, 0);
+                pattern.setAlpha(0.5);
+                pattern.setDepth(DEPTH.BACKGROUND + 1);
+
+                // Vignette Overlay
+                this.createVignette();
+
+                // Animated Particles in background
+                this.createBackgroundParticles();
+
+                // UI Header
+                this.createUI();
+
+                // Grid Setup
+                this.createGrid();
+
+                // Intro Sequence
+                this.showIntro();
+            }
+
+            createVignette() {
+                const { width, height } = this.cameras.main;
+                const vignette = this.add.graphics();
+                
+                // Use a large rectangle with a radial-like gradient feel
+                vignette.fillStyle(0x000000, 1);
+                vignette.fillRect(0, 0, width, height);
+                
+                vignette.setAlpha(0.2);
+                vignette.setBlendMode(Phaser.BlendModes.MULTIPLY);
+                vignette.setDepth(DEPTH.VIGNETTE);
+            }
+
+            showIntro() {
+                const { width, height } = this.cameras.main;
+                const readyText = this.add.text(width / 2, height / 2, 'READY?', { 
+                    fontSize: '200px', 
+                    fill: '#ffff00', 
+                    stroke: '#000', 
+                    strokeThickness: 20 
+                }).setOrigin(0.5).setScale(0);
+
+                this.tweens.add({
+                    targets: readyText,
+                    scale: 1,
+                    duration: 500,
+                    ease: 'Back.easeOut',
+                    onComplete: () => {
+                        this.time.delayedCall(500, () => {
+                            readyText.setText('GO!');
+                            readyText.setFill('#00ff00');
+                            this.tweens.add({
+                                targets: readyText,
+                                scale: 2,
+                                alpha: 0,
+                                duration: 500,
+                                ease: 'Power2',
+                                onComplete: () => {
+                                    readyText.destroy();
+                                    this.startGame();
+                                }
+                            });
+                        });
+                    }
+                });
+            }
+
+            startGame() {
+                // Game Timer
+                this.time.addEvent({
+                    delay: 1000,
+                    callback: this.updateTimer,
+                    callbackScope: this,
+                    loop: true
+                });
+
+                // Spawn Loop
+                this.scheduleNextSpawn();
+
+                // Input for general background miss
+                this.input.on('pointerdown', (pointer, currentlyOver) => {
+                    if (currentlyOver.length === 0) {
+                        this.handleMiss(pointer.x, pointer.y);
+                    }
+                });
+            }
+
+            createBackgroundParticles() {
+                // Create a simple particle texture
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0xffffff, 1);
+                graphics.fillCircle(10, 10, 10);
+                graphics.generateTexture('particle', 20, 20);
+                graphics.destroy();
+
+                const particles = this.add.particles(0, 0, 'particle', {
+                    x: { min: 0, max: CONFIG.width },
+                    y: { min: 0, max: CONFIG.height },
+                    scale: { min: 0.2, max: 0.8 },
+                    alpha: { start: 0.1, end: 0 },
+                    speed: { min: 5, max: 15 },
+                    angle: { min: 0, max: 360 },
+                    rotate: { min: 0, max: 360 },
+                    lifespan: 8000,
+                    frequency: 1000,
+                    blendMode: 'ADD'
+                });
+                particles.setDepth(DEPTH.BACKGROUND + 1);
+            }
+
+            createUI() {
+                const { width } = this.cameras.main;
+                
+                // Game Title
+                this.titleText = this.add.text(width / 2, 350, 'WHACK A LOGAN', { 
+                    fontFamily: 'Bungee', 
+                    fontSize: '120px', 
+                    fill: '#ffffff',
+                    stroke: '#000',
+                    strokeThickness: 12,
+                    align: 'center'
+                }).setOrigin(0.5);
+                
+                const maxTitleWidth = width * 0.95;
+                if (this.titleText.width > maxTitleWidth) {
+                    this.titleText.setScale(maxTitleWidth / this.titleText.width);
+                }
+
+                // Score Panel
+                this.scoreText = this.add.text(width / 2, 530, '00000', { 
+                    fontFamily: 'Roboto Mono', 
+                    fontSize: '140px', 
+                    fill: '#00ffcc',
+                    stroke: '#000',
+                    strokeThickness: 10
+                }).setOrigin(0.5);
+                
+                this.add.text(width / 2, 440, 'SCORE', { fontSize: '40px', fill: '#ffffff' }).setOrigin(0.5);
+
+                // Timer
+                this.timerText = this.add.text(width / 2, 670, '60', { 
+                    fontSize: '100px', 
+                    fill: '#ff0055',
+                    stroke: '#000',
+                    strokeThickness: 5
+                }).setOrigin(0.5);
+
+                // Combo & Multiplier
+                this.comboContainer = this.add.container(width / 2, 800);
+                this.comboText = this.add.text(0, 0, 'COMBO: 0', { fontSize: '60px', fill: '#ffcc00' }).setOrigin(0.5);
+                this.multiplierText = this.add.text(0, 80, 'x1', { fontSize: '80px', fill: '#00ff00', fontWeight: 'bold' }).setOrigin(0.5);
+                this.comboContainer.add([this.comboText, this.multiplierText]);
+                this.comboContainer.setAlpha(0);
+                
+                this.titleText.setDepth(DEPTH.UI);
+                this.scoreText.setDepth(DEPTH.UI);
+                this.timerText.setDepth(DEPTH.UI);
+                this.comboContainer.setDepth(DEPTH.UI);
+            }
+
+            createGrid() {
+                const { width, height } = this.cameras.main;
+                const startX = width / 2 - 320;
+                const startY = height / 2 + 100;
+                const spacing = 320;
+
+                for (let row = 0; row < CONFIG.gridSize; row++) {
+                    for (let col = 0; col < CONFIG.gridSize; col++) {
+                        const x = startX + col * spacing;
+                        const y = startY + row * spacing;
+                        
+                        // Outer Shadow
+                        this.add.ellipse(x, y + 15, CONFIG.holeRadius * 2.1, CONFIG.holeRadius * 1.3, 0x000000, 0.4).setDepth(DEPTH.HOLES - 1);
+                        
+                        // Hole Base
+                        const hole = this.add.graphics();
+                        
+                        // 3D Hole: Inner shadow
+                        hole.fillStyle(0x0a0a0a, 1);
+                        hole.fillEllipse(x, y, CONFIG.holeRadius * 2, CONFIG.holeRadius * 1.2);
+                        
+                        // 3D Hole: Rim highlight
+                        hole.lineStyle(4, 0x666666, 0.8);
+                        hole.strokeEllipse(x, y, CONFIG.holeRadius * 2, CONFIG.holeRadius * 1.2);
+                        
+                        // Subtle inner rim shadow
+                        hole.lineStyle(8, 0x000000, 0.5);
+                        hole.strokeEllipse(x, y + 5, CONFIG.holeRadius * 1.9, CONFIG.holeRadius * 1.1);
+
+                        hole.setDepth(DEPTH.HOLES);
+                        
+                        // Interactive area
+                        const hitArea = this.add.ellipse(x, y, CONFIG.holeRadius * 2, CONFIG.holeRadius * 1.2).setInteractive();
+                        hitArea.on('pointerdown', () => this.handleMiss(x, y));
+
+                        this.holes.push({ x, y, hitArea });
+                    }
+                }
+            }
+
+            updateTimer() {
+                if (this.isGameOver) return;
+                this.timeLeft--;
+                this.timerText.setText(this.timeLeft.toString().padStart(2, '0'));
+                
+                if (this.timeLeft <= 10) {
+                    this.timerText.setFill('#ff0000');
+                    this.tweens.add({ targets: this.timerText, scale: 1.2, duration: 200, yoyo: true });
+                }
+
+                if (this.timeLeft <= 0) {
+                    this.endGame();
+                }
+            }
+
+            scheduleNextSpawn() {
+                if (this.isGameOver) return;
+                const delay = Phaser.Math.Between(CONFIG.spawnIntervalMin, CONFIG.spawnIntervalMax);
+                this.time.delayedCall(delay, this.spawnNephew, [], this);
+            }
+
+            spawnNephew() {
+                if (this.isGameOver) return;
+                
+                // Cleanup previous if exists
+                if (this.activeNephew) {
+                    this.activeNephew.destroy();
+                }
+                if (this.activeSpotlight) {
+                    this.activeSpotlight.destroy();
+                }
+
+                const hole = Phaser.Utils.Array.GetRandom(this.holes);
+                const typeRoll = Math.random();
+                
+                let type = 'normal';
+                if (typeRoll < 0.10) type = 'golden';
+                else if (typeRoll < 0.25) type = 'decoy';
+
+                // Create Spotlight
+                const spotlight = this.add.graphics();
+                spotlight.fillStyle(0x00ffcc, 1);
+                spotlight.fillCircle(hole.x, hole.y, CONFIG.holeRadius * 1.5);
+                spotlight.setAlpha(0);
+                spotlight.setBlendMode(Phaser.BlendModes.ADD);
+                spotlight.setDepth(DEPTH.SPOTLIGHT);
+                
+                this.tweens.add({
+                    targets: spotlight,
+                    alpha: 0.1,
+                    duration: 150
+                });
+                this.activeSpotlight = spotlight;
+
+                const nephew = this.createNephewGraphic(hole.x, hole.y, type);
+                nephew.type = type;
+                nephew.setDepth(DEPTH.NEPHEW);
+                
+                nephew.setInteractive(new Phaser.Geom.Circle(0, 0, 100), Phaser.Geom.Circle.Contains);
+                nephew.on('pointerdown', (pointer, localX, localY, event) => {
+                    event.stopPropagation();
+                    this.handleHit(nephew, spotlight);
+                });
+
+                this.activeNephew = nephew;
+
+                // Auto-hide
+                this.time.delayedCall(CONFIG.displayDuration, () => {
+                    if (this.activeNephew === nephew) {
+                        this.tweens.add({
+                            targets: [nephew, spotlight],
+                            alpha: 0,
+                            duration: 100,
+                            onComplete: () => {
+                                nephew.destroy();
+                                spotlight.destroy();
+                                if (this.activeNephew === nephew) this.activeNephew = null;
+                                if (this.activeSpotlight === spotlight) this.activeSpotlight = null;
+                                if (type !== 'decoy') {
+                                    this.score = Math.max(0, this.score - 1);
+                                    this.resetCombo();
+                                    this.updateUI();
+                                }
+                                this.scheduleNextSpawn();
+                            }
+                        });
+                    }
+                });
+            }
+
+            createNephewGraphic(x, y, type) {
+                const container = this.add.container(x, y + 50);
+                
+                let textureKey = 'calm';
+                if (type === 'golden') {
+                    textureKey = 'golden';
+                } else if (type === 'decoy') {
+                    textureKey = 'sleeping';
+                } else {
+                    if (this.combo >= 6) {
+                        textureKey = 'annoyed';
+                    } else if (this.combo >= 3) {
+                        textureKey = 'shocked';
+                    } else {
+                        textureKey = 'calm';
+                    }
+                }
+
+                const img = this.add.image(0, 0, textureKey).setDisplaySize(220, 220);
+                container.add(img);
+
+                if (type === 'golden') {
+                    const glow = this.add.graphics();
+                    glow.lineStyle(8, 0xffffff, 0.8);
+                    glow.strokeCircle(0, 0, 110);
+                    container.add(glow);
+                }
+
+                if (type === 'decoy') {
+                    const zText = this.add.text(20, -80, 'Zzz', { fontSize: '40px', fill: '#fff' });
+                    container.add(zText);
+                }
+
+                this.tweens.add({
+                    targets: container,
+                    y: y - 80,
+                    duration: 150,
+                    ease: 'Back.easeOut'
+                });
+
+                return container;
+            }
+
+            handleHit(nephew, spotlight) {
+                if (this.isGameOver) return;
+
+                const type = nephew.type;
+                const x = nephew.x;
+                const y = nephew.y;
+                
+                nephew.destroy();
+                if (spotlight) {
+                    this.tweens.add({
+                        targets: spotlight,
+                        alpha: 0,
+                        duration: 100,
+                        onComplete: () => spotlight.destroy()
+                    });
+                }
+                
+                this.activeNephew = null;
+                this.activeSpotlight = null;
+
+                this.cameras.main.shake(100, 0.01);
+
+                if (type === 'decoy') {
+                    this.score = Math.max(0, this.score - 1);
+                    this.resetCombo();
+                    this.showFloatingText(x, y, 'BAD! -1', '#ff0000');
+                    this.createExplosion(x, y, 0xff0000);
+                } else {
+                    this.combo++;
+                    this.updateMultiplier();
+                    
+                    let points = (type === 'golden') ? 5 : 1;
+                    const totalPoints = points * this.multiplier;
+                    this.score += totalPoints;
+                    
+                    if (type === 'golden') {
+                        this.showFloatingText(x, y, 'PERFECT!', '#ffff00', 1.5);
+                    }
+                    this.showFloatingText(x, y, `+${totalPoints}`, (type === 'golden') ? '#ffff00' : '#00ffcc');
+                    this.createExplosion(x, y, (type === 'golden') ? 0xffff00 : 0x00ffcc);
+                    
+                    if (this.combo >= 3) {
+                        this.comboContainer.setAlpha(1);
+                        this.tweens.add({ targets: this.comboContainer, scale: 1.2, duration: 100, yoyo: true });
+                        
+                        if (this.combo >= 6) {
+                            this.multiplierText.setStroke('#ff6600', 10);
+                            this.cameras.main.shake(50, 0.005);
+                        }
+                    }
+                }
+
+                this.updateUI();
+                this.scheduleNextSpawn();
+            }
+
+            handleMiss(x, y) {
+                if (this.isGameOver) return;
+                this.score = Math.max(0, this.score - 1);
+                this.resetCombo();
+                this.updateUI();
+                this.showFloatingText(x, y, 'MISS -1', '#888888');
+                this.cameras.main.flash(50, 100, 0, 0, 0.2);
+            }
+
+            createExplosion(x, y, color) {
+                for (let i = 0; i < 12; i++) {
+                    const angle = Phaser.Math.DegToRad(i * 30);
+                    const dist = Phaser.Math.Between(50, 150);
+                    const circle = this.add.circle(x, y, Phaser.Math.Between(5, 15), color);
+                    
+                    this.tweens.add({
+                        targets: circle,
+                        x: x + Math.cos(angle) * dist,
+                        y: y + Math.sin(angle) * dist,
+                        alpha: 0,
+                        scale: 0,
+                        duration: 400,
+                        onComplete: () => circle.destroy()
+                    });
+                }
+            }
+
+            resetCombo() {
+                if (this.combo > 0) {
+                    this.tweens.add({ targets: this.comboContainer, alpha: 0, scale: 0.5, duration: 200 });
+                }
+                this.combo = 0;
+                this.multiplier = 1;
+                this.updateUI();
+            }
+
+            updateMultiplier() {
+                if (this.combo >= 6) this.multiplier = 3;
+                else if (this.combo >= 3) this.multiplier = 2;
+                else this.multiplier = 1;
+            }
+
+            updateUI() {
+                this.scoreText.setText(this.score.toString().padStart(5, '0'));
+                this.comboText.setText(`COMBO: ${this.combo}`);
+                this.multiplierText.setText(`x${this.multiplier}`);
+                
+                if (this.multiplier > 1) {
+                    this.multiplierText.setFill(this.multiplier >= 3 ? '#ff00ff' : '#00ff00');
+                }
+            }
+
+            showFloatingText(x, y, text, color, scale = 1) {
+                const txt = this.add.text(x, y, text, { 
+                    fontSize: '80px', 
+                    fill: color, 
+                    fontWeight: 'bold',
+                    stroke: '#000',
+                    strokeThickness: 5
+                }).setOrigin(0.5).setScale(scale);
+                txt.setDepth(DEPTH.UI + 1);
+                
+                this.tweens.add({
+                    targets: txt,
+                    y: y - 200,
+                    alpha: 0,
+                    scale: scale * 1.5,
+                    duration: 600,
+                    onComplete: () => txt.destroy()
+                });
+            }
+
+            endGame() {
+                this.isGameOver = true;
+                if (this.activeNephew) this.activeNephew.destroy();
+                if (this.activeSpotlight) this.activeSpotlight.destroy();
+                
+                const highScore = parseInt(localStorage.getItem('nephew_high_score_arcade') || '0');
+                if (this.score > highScore) {
+                    localStorage.setItem('nephew_high_score_arcade', this.score.toString());
+                }
+
+                this.scene.start('GameOverScene', { score: this.score, highScore: Math.max(this.score, highScore) });
+            }
+        }
+
+        class GameOverScene extends Phaser.Scene {
+            constructor() {
+                super('GameOverScene');
+            }
+
+            create(data) {
+                const { width, height } = this.cameras.main;
+                this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.9);
+
+                this.add.text(width / 2, height / 2 - 400, 'GAME OVER', { 
+                    fontSize: '140px', 
+                    fill: '#ff0055', 
+                    stroke: '#fff',
+                    strokeThickness: 10
+                }).setOrigin(0.5);
+                
+                this.add.text(width / 2, height / 2 - 150, `FINAL SCORE`, { fontSize: '50px', fill: '#aaa' }).setOrigin(0.5);
+                this.add.text(width / 2, height / 2 - 50, `${data.score}`, { fontSize: '120px', fill: '#00ffcc' }).setOrigin(0.5);
+                
+                this.add.text(width / 2, height / 2 + 100, `BEST: ${data.highScore}`, { fontSize: '60px', fill: '#ffcc00' }).setOrigin(0.5);
+
+                const restartBtn = this.add.container(width / 2, height / 2 + 350);
+                const bg = this.add.rectangle(0, 0, 600, 150, 0x00ffcc).setInteractive();
+                const txt = this.add.text(0, 0, 'PLAY AGAIN', { fontSize: '60px', fill: '#000' }).setOrigin(0.5);
+                restartBtn.add([bg, txt]);
+
+                bg.on('pointerdown', () => {
+                    this.tweens.add({
+                        targets: restartBtn,
+                        scale: 0.9,
+                        duration: 50,
+                        yoyo: true,
+                        onComplete: () => this.scene.start('MainScene')
+                    });
+                });
+
+                this.time.addEvent({
+                    delay: 200,
+                    callback: () => {
+                        const x = Phaser.Math.Between(0, width);
+                        const y = Phaser.Math.Between(0, height);
+                        const star = this.add.star(x, y, 5, 5, 15, 0xffffff);
+                        this.tweens.add({ targets: star, alpha: 0, scale: 2, duration: 500, onComplete: () => star.destroy() });
+                    },
+                    loop: true
+                });
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO,
+            parent: 'game-container',
+            width: CONFIG.width,
+            height: CONFIG.height,
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH
+            },
+            scene: [MainScene, GameOverScene],
+            backgroundColor: '#0a0a0a'
+        };
+
+        new Phaser.Game(config);
+    </script>
+</body>
+</html>
