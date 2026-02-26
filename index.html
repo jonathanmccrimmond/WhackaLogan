@@ -592,6 +592,11 @@
                 const { width, height } = this.cameras.main;
                 this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.9);
 
+                // 🔥 ADD THIS RIGHT HERE
+                this.input.once('pointerdown', () => {
+                    this.scene.start('MainScene');
+                 });
+
                 this.add.text(width / 2, height / 2 - 400, 'GAME OVER', { 
                     fontSize: '140px', 
                     fill: '#ff0055', 
