@@ -606,18 +606,16 @@
 
                 // press animation
                 btnBg.on('pointerdown', () => {
-                  this.tweens.add({
-                    targets: [btnBg, btnTxt],
-                    scale: 0.95,
-                    duration: 80,
-                    yoyo: true
-  });
-});
+                    this.tweens.add({
+                        targets: [btnBg, btnTxt],
+                        scale: 0.95,
+                        duration: 80,
+                        yoyo: true
+                      });
 
-// restart on release (best for touch)
-btnBg.on('pointerup', () => {
-  this.scene.start('MainScene');
-});
+                // restart immediately (mobile-safe)
+                    this.scene.start('MainScene');
+                });
 
                 this.time.addEvent({
                     delay: 200,
