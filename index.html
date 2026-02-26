@@ -25,6 +25,17 @@
             max-height: 100vh;
             box-shadow: 0 0 50px rgba(0,0,0,0.5);
         }
+        html, body {
+            margin: 0;
+            padding: 0;
+            touch-action: none;
+            overscroll-behavior: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #game-container, canvas {
+            touch-action: none;
+        }
     </style>
 </head>
 <body>
