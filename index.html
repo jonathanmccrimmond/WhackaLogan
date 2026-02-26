@@ -620,18 +620,7 @@
                     fill: '#000'
                     }).setOrigin(0.5);
 
-                // press animation
-                btnBg.on('pointerdown', () => {
-                    this.tweens.add({
-                        targets: [btnBg, btnTxt],
-                        scale: 0.95,
-                        duration: 80,
-                        yoyo: true
-                      });
-
-                // restart immediately (mobile-safe)
-                    this.scene.start('MainScene');
-                });
+    
 
                 this.time.addEvent({
                     delay: 200,
